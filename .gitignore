@@ -1,0 +1,29 @@
+# CMake build output
+**/build/
+
+# Compiled artifacts
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Downloaded dependencies and model artifacts
+third_party/
+models/*.onnx
+
+# Generated images
+image/letterbox_debug.jpg
+image/onnx_detections_refactored.jpg
+
+# Machine-specific metadata and editor settings
+.vscode/
+*:Zone.Identifier
+.DS_Store
+Thumbs.db
