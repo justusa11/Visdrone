@@ -5,30 +5,61 @@ project(visdrone_cpp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --------------------------------------------------
+# OpenCV
+# --------------------------------------------------
+
 find_package(OpenCV REQUIRED)
 
-get_filename_component(
-    ONNXRUNTIME_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/onnxruntime-linux-x64-1.31.0"
-    ABSOLUTE
- )
+# --------------------------------------------------
+# ONNX Runtime
+# --------------------------------------------------
 
-add_library(onnxruntime SHARED IMPORTED)
-set_target_properties(
-    onnxruntime
-    PROPERTIES
-    IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/libonnxruntime.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_DIR}/include"
+message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
+
+set(
+    ONNXRUNTIME_DIR
+    "${CMAKE_SOURCE_DIR}/../third_party/onnxruntime-linux-x64-1.31.0"
 )
+
+# --------------------------------------------------
+# Executable
+# --------------------------------------------------
 
 add_executable(
-    visdrone_app 
+    visdrone_app
     main.cpp
 )
+
+# --------------------------------------------------
+# Include directories
+# --------------------------------------------------
+
+target_include_directories(
+    visdrone_app
+    PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+    "${ONNXRUNTIME_DIR}/include"
+)
+
+# --------------------------------------------------
+# Libraries
+# --------------------------------------------------
 
 target_link_libraries(
     visdrone_app
     PRIVATE
     ${OpenCV_LIBS}
-    onnxruntime
+    "${ONNXRUNTIME_DIR}/lib/libonnxruntime.so"
+)
+
+# --------------------------------------------------
+# Runtime path for libonnxruntime.so
+# --------------------------------------------------
+
+set_target_properties(
+    visdrone_app
+    PROPERTIES
+    BUILD_RPATH "${ONNXRUNTIME_DIR}/lib"
 )

@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 #include <iomanip>
+#include <array>
+#include <chrono>
+#include <limits>
 
 #include <opencv2/opencv.hpp>
 #include <onnxruntime_cxx_api.h>
@@ -135,6 +138,116 @@ void printShape(const std::vector<int64_t>& shape)
     std::cout << "]";
 }
 
+// --------------------------------------------------
+// Detection Struct
+// --------------------------------------------------
+struct Detection
+{
+    float x1;
+    float y1;
+    float x2;
+    float y2;
+
+    int class_id;
+    float score;
+};
+
+// --------------------------------------------------
+// IoU
+// --------------------------------------------------
+float iou(
+    const Detection& a,
+    const Detection& b
+)
+{
+    const float inter_left = std::max(a.x1, b.x1);
+    const float inter_top = std::max(a.y1, b.y1);
+    const float inter_right = std::min(a.x2, b.x2);
+    const float inter_bottom = std::min(a.y2, b.y2);
+
+    const float inter_w =
+        std::max(0.0f, inter_right - inter_left);
+
+    const float inter_h =
+        std::max(0.0f, inter_bottom - inter_top);
+
+    const float intersection =
+        inter_w * inter_h;
+
+    const float area_a =
+        std::max(0.0f, a.x2 - a.x1)
+        * std::max(0.0f, a.y2 - a.y1);
+
+    const float area_b =
+        std::max(0.0f, b.x2 - b.x1)
+        * std::max(0.0f, b.y2 - b.y1);
+
+    const float union_area =
+        area_a + area_b - intersection;
+
+    if (union_area <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return intersection / union_area;
+}
+
+// --------------------------------------------------
+// Class-aware NMS
+// --------------------------------------------------
+std::vector<Detection> nms(
+    std::vector<Detection> detections,
+    float iou_threshold = 0.7f
+)
+{
+    std::sort(
+        detections.begin(),
+        detections.end(),
+        [](const Detection& a, const Detection& b)
+        {
+            return a.score > b.score;
+        }
+    );
+
+    std::vector<Detection> kept;
+    std::vector<bool> suppressed(
+        detections.size(),
+        false
+    );
+
+    for (size_t i = 0; i < detections.size(); ++i)
+    {
+        if (suppressed[i])
+        {
+            continue;
+        }
+
+        kept.push_back(detections[i]);
+
+        for (size_t j = i + 1; j < detections.size(); ++j)
+        {
+            if (suppressed[j])
+            {
+                continue;
+            }
+
+            // Class-aware NMS
+            if (detections[i].class_id != detections[j].class_id)
+            {
+                continue;
+            }
+
+            if (iou(detections[i], detections[j]) > iou_threshold)
+            {
+                suppressed[j] = true;
+            }
+        }
+    }
+
+    return kept;
+}
+
 int main(int argc, char* argv[])
 {
     if (argc < 3)
@@ -242,26 +355,290 @@ int main(int argc, char* argv[])
     // Create model session
     // --------------------------------------------------
 
-#ifdef _WIN32
-    std::wstring modelPathW(
-        modelPath.begin(),
-        modelPath.end()
+    #ifdef _WIN32
+        std::wstring modelPathW(
+            modelPath.begin(),
+            modelPath.end()
+        );
+
+        Ort::Session session(
+            env,
+            modelPathW.c_str(),
+            sessionOptions
+        );
+    #else
+        Ort::Session session(
+            env,
+            modelPath.c_str(),
+            sessionOptions
+        );
+    #endif
+
+        Ort::AllocatorWithDefaultOptions allocator;
+
+    // --------------------------------------------------
+    // RUN ONNX MODEL
+    // --------------------------------------------------
+
+    // Input tensor shape: [1, 3, 640, 640]
+    std::array<int64_t, 4> input_shape = {
+        1,
+        3,
+        640,
+        640
+    };
+
+    // Tell ONNX Runtime that our tensor lives in CPU memory
+    Ort::MemoryInfo memory_info =
+        Ort::MemoryInfo::CreateCpu(
+            OrtArenaAllocator,
+            OrtMemTypeDefault
+        );
+
+    // Create ONNX Runtime tensor.
+    //
+    // IMPORTANT:
+    // This does NOT copy prep.tensor.
+    // ONNX Runtime points directly at prep.tensor.data().
+    // Therefore prep.tensor must remain alive until session.Run() finishes.
+    Ort::Value input_tensor =
+        Ort::Value::CreateTensor<float>(
+            memory_info,
+            prep.tensor.data(),
+            prep.tensor.size(),
+            input_shape.data(),
+            input_shape.size()
+        );
+
+    // We already verified these names in Step 5.2
+    const char* input_names[] = {
+        "images"
+    };
+
+    const char* output_names[] = {
+        "output0"
+    };
+
+
+    // --------------------------------------------------
+    // RUN INFERENCE + TIME IT
+    // --------------------------------------------------
+
+    auto start = std::chrono::steady_clock::now();
+
+    std::vector<Ort::Value> outputs =
+        session.Run(
+            Ort::RunOptions{nullptr},
+            input_names,
+            &input_tensor,
+            1,
+            output_names,
+            1
+        );
+
+    auto end = std::chrono::steady_clock::now();
+
+    double inference_ms =
+        std::chrono::duration<double, std::milli>(
+            end - start
+        ).count();
+
+    std::cout
+        << "\nInference time: "
+        << inference_ms
+        << " ms\n";
+
+
+    // --------------------------------------------------
+    // CHECK OUTPUT SHAPE
+    // --------------------------------------------------
+
+    auto output_info =
+        outputs[0].GetTensorTypeAndShapeInfo();
+
+    std::vector<int64_t> output_shape =
+        output_info.GetShape();
+
+    std::cout << "Raw output shape: [";
+
+    for (size_t i = 0; i < output_shape.size(); ++i)
+    {
+        std::cout << output_shape[i];
+
+        if (i + 1 < output_shape.size())
+        {
+            std::cout << ", ";
+        }
+    }
+
+    std::cout << "]\n";
+
+
+    // --------------------------------------------------
+    // READ RAW OUTPUT
+    // --------------------------------------------------
+
+    const float* data =
+        outputs[0].GetTensorData<float>();
+
+    // --------------------------------------------------
+    // DECODE 8400 CANDIDATES
+    // --------------------------------------------------
+    constexpr int NUM_CANDIDATES = 8400;
+    constexpr int NUM_CLASSES = 10;
+
+    std::vector<Detection> candidates;
+
+    for (int i = 0; i < NUM_CANDIDATES; ++i)
+    {
+        float best_score = -1.0f;
+        int best_class = -1;
+
+        for (int c = 0; c < NUM_CLASSES; ++c)
+        {
+            const float score =
+                data[(4 + c) * NUM_CANDIDATES + i];
+
+            if (score > best_score)
+            {
+                best_score = score;
+                best_class = c;
+            }
+        }
+
+        if (best_score < 0.25f)
+        {
+            continue;
+        }
+
+        const float cx =
+            data[0 * NUM_CANDIDATES + i];
+
+        const float cy =
+            data[1 * NUM_CANDIDATES + i];
+
+        const float w =
+            data[2 * NUM_CANDIDATES + i];
+
+        const float h =
+            data[3 * NUM_CANDIDATES + i];
+
+        Detection det;
+
+        det.x1 = cx - w / 2.0f;
+        det.y1 = cy - h / 2.0f;
+        det.x2 = cx + w / 2.0f;
+        det.y2 = cy + h / 2.0f;
+
+        det.class_id = best_class;
+        det.score = best_score;
+
+        candidates.push_back(det);
+    }
+
+    // --------------------------------------------------
+    // APPLY CLASS-AWARE NMS
+    // --------------------------------------------------
+    std::cout
+        << "Candidates after score filter: "
+        << candidates.size()
+        << "\n";
+
+    // --------------------------------------------------
+    // APPLY CLASS-AWARE NMS
+    // --------------------------------------------------
+    std::vector<Detection> final_detections =
+        nms (
+            candidates,
+            0.7f
+        );
+
+    std::cout
+        << "After NMS: "
+        << final_detections.size()
+        << "\n";
+
+    // --------------------------------------------------
+    // MAP BOXES BACK TO ORIGINAL
+    // --------------------------------------------------
+    for (Detection& det : final_detections)
+    {
+        det.x1 =
+            (det.x1 - prep.pad_x) / prep.scale;
+
+        det.y1 =
+            (det.y1 - prep.pad_y) / prep.scale;
+
+        det.x2 =
+            (det.x2 - prep.pad_x) / prep.scale;
+
+        det.y2 =
+            (det.y2 - prep.pad_y) / prep.scale;
+
+        det.x1 = std::clamp(
+            det.x1,
+            0.0f,
+            static_cast<float>(image.cols)
+        );
+
+        det.y1 = std::clamp(
+            det.y1,
+            0.0f,
+            static_cast<float>(image.rows)
+        );
+
+        det.x2 = std::clamp(
+            det.x2,
+            0.0f,
+            static_cast<float>(image.cols)
+        );
+
+        det.y2 = std::clamp(
+            det.y2,
+            0.0f,
+            static_cast<float>(image.rows)
+        );
+    }
+
+    // --------------------------------------------------
+    // SORT BY DECENDING SCORE
+    // --------------------------------------------------
+    std::sort(
+        final_detections.begin(),
+        final_detections.end(),
+        [](const Detection& a, const Detection& b)
+        {
+            return a.score > b.score;
+        }
     );
 
-    Ort::Session session(
-        env,
-        modelPathW.c_str(),
-        sessionOptions
-    );
-#else
-    Ort::Session session(
-        env,
-        modelPath.c_str(),
-        sessionOptions
-    );
-#endif
+    // --------------------------------------------------
+    // PRINT FINAL COUNT TO TOP FIVE
+    // --------------------------------------------------
+    std::cout
+        << "\nFinal detections: "
+        << final_detections.size()
+        << "\n";
 
-    Ort::AllocatorWithDefaultOptions allocator;
+    for (
+        size_t i = 0;
+        i < std::min<size_t>(5, final_detections.size());
+        ++i
+    )
+    {
+        const Detection& det =
+            final_detections[i];
+
+        std::cout
+            << i + 1
+            << " class=" << det.class_id
+            << " score=" << det.score
+            << " box=["
+            << det.x1 << ", "
+            << det.y1 << ", "
+            << det.x2 << ", "
+            << det.y2 << "]\n";
+    }
 
     // --------------------------------------------------
     // Inputs
