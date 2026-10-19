@@ -21,6 +21,7 @@ message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
 set(
     ONNXRUNTIME_DIR
     "${CMAKE_SOURCE_DIR}/../third_party/onnxruntime-linux-x64-1.31.0"
+    CACHE PATH "Path to the ONNX Runtime package"
 )
 
 # --------------------------------------------------

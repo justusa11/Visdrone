@@ -16,7 +16,6 @@ venv/
 
 # Downloaded dependencies and model artifacts
 third_party/
-models/*.onnx
 
 # Generated images
 image/letterbox_debug.jpg
@@ -32,3 +31,4 @@ Thumbs.db
 videos/
 
 **/build*/
+/output_*.jpg
