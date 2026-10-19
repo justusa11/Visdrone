@@ -534,7 +534,6 @@ CMakeFiles/visdrone_app.dir/src/main.cpp.o: /home/anoru/Visdrone/cpp/src/main.cp
   /usr/include/c++/13/bits/stl_map.h \
   /usr/include/c++/13/bits/stl_multimap.h \
   /usr/include/c++/13/bits/stl_multiset.h \
-  /usr/include/c++/13/bits/stl_numeric.h \
   /usr/include/c++/13/bits/stl_pair.h \
   /usr/include/c++/13/bits/stl_queue.h \
   /usr/include/c++/13/bits/stl_raw_storage_iter.h \
@@ -601,12 +600,10 @@ CMakeFiles/visdrone_app.dir/src/main.cpp.o: /home/anoru/Visdrone/cpp/src/main.cp
   /usr/include/c++/13/memory \
   /usr/include/c++/13/mutex \
   /usr/include/c++/13/new \
-  /usr/include/c++/13/numeric \
   /usr/include/c++/13/ostream \
   /usr/include/c++/13/pstl/execution_defs.h \
   /usr/include/c++/13/pstl/glue_algorithm_defs.h \
   /usr/include/c++/13/pstl/glue_memory_defs.h \
-  /usr/include/c++/13/pstl/glue_numeric_defs.h \
   /usr/include/c++/13/pstl/pstl_config.h \
   /usr/include/c++/13/queue \
   /usr/include/c++/13/ratio \
@@ -877,15 +874,11 @@ CMakeFiles/visdrone_app.dir/src/main.cpp.o: /home/anoru/Visdrone/cpp/src/main.cp
   /usr/lib/gcc/x86_64-linux-gnu/13/include/xmmintrin.h
 
 
-/usr/include/c++/13/bits/stl_numeric.h:
-
 /usr/lib/gcc/x86_64-linux-gnu/13/include/xmmintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h:
-
-/usr/include/c++/13/numeric:
 
 /usr/lib/gcc/x86_64-linux-gnu/13/include/stdarg.h:
 
@@ -994,8 +987,6 @@ CMakeFiles/visdrone_app.dir/src/main.cpp.o: /home/anoru/Visdrone/cpp/src/main.cp
 /usr/include/x86_64-linux-gnu/bits/pthreadtypes.h:
 
 /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h:
-
-/usr/include/c++/13/pstl/glue_numeric_defs.h:
 
 /usr/include/x86_64-linux-gnu/bits/posix1_lim.h:
 

@@ -7,6 +7,9 @@ The goal is to understand the full path from training a model to running it effi
 ![C++ detections on a VisDrone validation image](docs/output_640.jpg)
 *C++ pipeline, 640 model: 26 detections, identical to the Python/Ultralytics reference.*
 
+![C++ video inference, 416 model](docs/demo_416.gif)
+*Video mode, 416 model, with a live FPS / latency / detection-count overlay.*
+
 ---
 
 ## Project status
@@ -18,7 +21,8 @@ The goal is to understand the full path from training a model to running it effi
 | 3 | Evaluation: precision / recall / mAP, recall by object size, failure cases | ✅ Done |
 | 4 | Export to ONNX, inference in Python with ONNX Runtime, verify against Ultralytics | ✅ Done |
 | 5 | C++ inference pipeline (OpenCV + ONNX Runtime + CMake), verified and benchmarked against Python | ✅ Done |
-| 6 | Video input and benchmarks on Raspberry Pi 4 (640 / 416 / 320) | ⏳ Next |
+| 6a | Video input with per-stage timing (640 / 416 / 320) | ✅ Done |
+| 6b | Benchmarks on Raspberry Pi 4 (640 / 416 / 320) | ⏳ Next |
 
 ---
 
@@ -125,7 +129,7 @@ Each implementation is checked against the previous one on the same image (`0000
 ### C++ vs Python (same machine, same engine)
 
 WSL2 Ubuntu 24.04, ONNX Runtime **1.31.0** in both languages, CPU only, default threading. Median of 50 timed runs after 3 warm-up runs; image loading and drawing are not timed. Times in ms.
-Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz - 4
+<!-- Fill in: CPU model (lscpu | grep "Model name") and nproc -->
 
 | Model | Lang | Pre | Inference | Post | Total | FPS |
 |---|---|---|---|---|---|---|
@@ -159,6 +163,29 @@ The fix: reuse class-member buffers that are allocated once, and do BGR→RGB, /
 
 The detections stayed identical before and after the change.
 
+### Video: per-frame timing (C++)
+
+A 2,859-frame aerial traffic video (~47 s, 60 fps), processed frame by frame: read → detect → draw → write. Each stage is timed per frame, and the first frames are excluded as warm-up. WSL2, Release build. Times in ms.
+
+| Input | Detect median | Detect P95 | Detector FPS | Write (encode) | End-to-end median | End-to-end FPS | Write share of end-to-end |
+|---|---|---|---|---|---|---|---|
+| 640 | 73.1 | 93.8 | **13.7** | 15.4 | 93.8 | **10.7** | 16% |
+| 416 | 28.0 | 38.3 | **35.7** | 15.3 | 48.0 | **20.8** | 32% |
+| 320 | 18.2 | 34.4 | **54.8** | 15.9 | 38.7 | **25.9** | 41% |
+
+Read (decode) is ~3 ms and drawing ~1 ms per frame for all three models.
+
+**Findings**
+1. **Video I/O is a fixed cost that becomes the bottleneck.** Read, draw and write take ~20 ms per frame regardless of model. Going from 640 to 320 makes the detector **4× faster** (13.7 → 54.8 FPS) but end-to-end only **2.4× faster** (10.7 → 25.9 FPS). At 320, more time goes to video I/O than to detection (Amdahl's law). On a drone, annotated video would normally not be encoded on board, so **detector FPS is the relevant system number**.
+2. **The median is not enough for real time.** At a 30 fps camera (33 ms budget), 416 and 320 meet the budget at the median but not at P95, so about 1 in 20 frames is late. 640 misses it entirely.
+3. **Jitter hurts small models the most.** P95/median for detection is 1.3× at 640 but 1.9× at 320. Scheduling noise on a shared laptop is roughly constant in milliseconds, so it weighs more when the model is fast.
+
+**Observed model behavior on this video**
+- Cars are detected reliably, with high confidence.
+- Long buses are often labeled `truck`. The footage shows South Asian traffic, whose buses look different from the VisDrone (China) training data. This is **domain shift**.
+- Dense clusters of motorbikes and pedestrians are largely missed, consistent with the small-object recall measured in step 3.
+- Detections flicker between frames, as expected for per-frame detection without tracking.
+
 ---
 
 ## Repository structure
@@ -170,14 +197,15 @@ The detections stayed identical before and after the change.
 │   └── src/
 │       ├── detector.hpp        # Detection / Timings structs, Detector class
 │       ├── detector.cpp        # letterbox, ONNX Runtime inference, decode, NMS
-│       └── main.cpp            # CLI: single image (draw + save) or --bench mode
+│       └── main.cpp            # CLI: single image (draw + save), --bench mode, --video mode
 ├── python/
 │   ├── onnx_infer.py           # preprocess / infer / postprocess / NMS in NumPy
 │   ├── verify_against_ultralytics.py
 │   └── benchmark.py            # timing at 640 / 416 / 320
 ├── models/                     # visdrone_yolo11n_{640,416,320}.onnx
 ├── image/                      # test images
-├── docs/                       # images used in this README
+├── docs/                       # images and GIF used in this README
+├── videos/                     # input/output videos (not committed)
 └── third_party/                # ONNX Runtime (not committed)
 ```
 
@@ -213,6 +241,10 @@ cmake --build cpp/build-release
 # Benchmark: 3 warm-up runs + N timed runs, prints medians per stage
 ./cpp/build-release/visdrone_app models/visdrone_yolo11n_640.onnx \
     image/0000242_02400_d_0000009.jpg output_640.jpg --bench 50
+
+# Video: annotated output + per-stage timing (median / P95 / max)
+./cpp/build-release/visdrone_app models/visdrone_yolo11n_416.onnx \
+    --video videos/input.mp4 videos/output_416_timed.mp4
 ```
 
 The ONNX Runtime library path is embedded in the binary through RPATH, so `LD_LIBRARY_PATH` isn't needed.
@@ -225,8 +257,10 @@ Python · Ultralytics YOLO11 (8.4) · PyTorch · Google Colab (T4) · ONNX · ON
 
 ## Next steps
 
-- **Video input:** `cv::VideoCapture` → `Detector` → annotated video, with per-frame timing
-- **Raspberry Pi 4 (64-bit OS):** C++ and Python benchmarks at 640 / 416 / 320, to find the input size that runs in real time
+- **Raspberry Pi 4 (64-bit OS):** C++ and Python benchmarks (image and video) at 640 / 416 / 320, to find the input size that runs in real time
+- **Accuracy vs input size:** mAP and small-object recall at 416 and 320, for a full speed-vs-accuracy trade-off table
+- **Pipelined video loop:** separate threads for capture, detection and writing (bounded queue), so end-to-end throughput approaches detector throughput; for a live camera, always process the newest frame
+- **Tracking:** a simple tracker (e.g. ByteTrack/SORT) to stabilize detections across frames
 - **Faster inference:** INT8 quantization, explicit thread settings
 - **Better small-object recall:** higher input resolution, tiling/slicing (SAHI), or a P2 detection head
 

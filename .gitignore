@@ -27,3 +27,7 @@ image/onnx_detections_refactored.jpg
 *:Zone.Identifier
 .DS_Store
 Thumbs.db
+
+# Videos
+videos/
+
