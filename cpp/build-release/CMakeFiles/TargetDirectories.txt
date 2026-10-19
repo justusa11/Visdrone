@@ -1,3 +1,0 @@
-/home/anoru/Visdrone/cpp/build-release/CMakeFiles/visdrone_app.dir
-/home/anoru/Visdrone/cpp/build-release/CMakeFiles/edit_cache.dir
-/home/anoru/Visdrone/cpp/build-release/CMakeFiles/rebuild_cache.dir

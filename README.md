@@ -199,10 +199,12 @@ Read (decode) is ~3 ms and drawing ~1 ms per frame for all three models.
 │       ├── detector.cpp        # letterbox, ONNX Runtime inference, decode, NMS
 │       └── main.cpp            # CLI: single image (draw + save), --bench mode, --video mode
 ├── python/
-│   ├── onnx_infer.py           # preprocess / infer / postprocess / NMS in NumPy
-│   ├── verify_against_ultralytics.py
-│   └── benchmark.py            # timing at 640 / 416 / 320
-├── models/                     # visdrone_yolo11n_{640,416,320}.onnx
+│   ├── inspect_onnx.py         # preprocess / infer / postprocess / NMS in NumPy
+│   ├── verify.py               # compare against Ultralytics (IoU, confidence)
+│   ├── benchmark.py            # timing at 640 / 416 / 320
+│   └── test.py                 # tensor checksum / pixel check used to verify the C++ letterbox
+├── models/                     # visdrone_yolo11n_{640,416,320}.onnx (exported from the fine-tuned best.pt)
+├── Notes/                      # experiment notes
 ├── image/                      # test images
 ├── docs/                       # images and GIF used in this README
 ├── videos/                     # input/output videos (not committed)
@@ -219,10 +221,22 @@ Read (decode) is ~3 ms and drawing ~1 ms per frame for all three models.
 python -m venv .venv && source .venv/bin/activate
 pip install onnxruntime==1.31.0 opencv-python numpy ultralytics
 
-python python/onnx_infer.py
-python python/verify_against_ultralytics.py
+python python/inspect_onnx.py
+python python/verify.py
 python python/benchmark.py
 ```
+
+### Exporting the ONNX models
+
+From the fine-tuned weights (`best.pt`), one static model per input size, without built-in NMS:
+
+```bash
+yolo export model=best.pt format=onnx imgsz=640
+yolo export model=best.pt format=onnx imgsz=416
+yolo export model=best.pt format=onnx imgsz=320
+```
+
+Rename the outputs to `models/visdrone_yolo11n_{640,416,320}.onnx`.
 
 ### C++ (Ubuntu 24.04 / WSL2)
 
@@ -233,6 +247,10 @@ sudo apt install build-essential cmake pkg-config libopencv-dev
 
 cmake -S cpp -B cpp/build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build cpp/build-release
+
+# On another platform (e.g. Raspberry Pi / aarch64), point to that ONNX Runtime build:
+# cmake -S cpp -B cpp/build-release -DCMAKE_BUILD_TYPE=Release \
+#       -DONNXRUNTIME_DIR=$PWD/third_party/onnxruntime-linux-aarch64-1.31.0
 
 # Detect, draw and save
 ./cpp/build-release/visdrone_app models/visdrone_yolo11n_640.onnx \
