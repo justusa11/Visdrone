@@ -19,7 +19,7 @@ MODEL_CONFIGS = [
 
 IMAGE_PATH = "image/0000242_02400_d_0000009.jpg"
 
-WARMUP_RUNS = 5
+WARMUP_RUNS = 3
 TIMED_RUNS = 50
 
 
@@ -93,7 +93,7 @@ for model_path, input_size in MODEL_CONFIGS:
 
     for _ in range(TIMED_RUNS):
 
-        total_start = time.perf_counter()
+        #total_start = time.perf_counter()
 
         # Preprocess
         start = time.perf_counter()
@@ -105,10 +105,9 @@ for model_path, input_size in MODEL_CONFIGS:
 
         end = time.perf_counter()
 
-        preprocess_times.append(
-            (end - start) * 1000
-        )
-
+        pre_ms = (end - start) * 1000
+        preprocess_times.append(pre_ms)
+        
         # Inference
         start = time.perf_counter()
 
@@ -119,9 +118,9 @@ for model_path, input_size in MODEL_CONFIGS:
 
         end = time.perf_counter()
 
-        inference_times.append(
-            (end - start) * 1000
-        )
+        infer_ms = (end - start) * 1000
+
+        inference_times.append(infer_ms)
 
         # Postprocess
         start = time.perf_counter()
@@ -139,17 +138,16 @@ for model_path, input_size in MODEL_CONFIGS:
 
         end = time.perf_counter()
 
-        postprocess_times.append(
-            (end - start) * 1000
-        )
+        post_ms = (end - start) * 1000
+
+        postprocess_times.append(post_ms)
 
         detection_count = len(detections)
 
-        total_end = time.perf_counter()
+        # Total
+        total_ms = pre_ms + infer_ms + post_ms
 
-        total_times.append(
-            (total_end - total_start) * 1000
-        )
+        total_times.append(total_ms)
 
     # --------------------------------------------------
     # Summaries
@@ -160,7 +158,7 @@ for model_path, input_size in MODEL_CONFIGS:
     post_stats = summarize(postprocess_times)
     total_stats = summarize(total_times)
 
-    fps = 1000.0 / total_stats["mean"]
+    fps = 1000.0 / total_stats["median"]
 
     print()
     print(f"Detections: {detection_count}")

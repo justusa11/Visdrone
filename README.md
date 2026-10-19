@@ -1,8 +1,11 @@
 # Aerial Object Detection: YOLO11n on VisDrone → ONNX → C++ → Raspberry Pi
 
-An end-to-end object detection pipeline for drone imagery. I fine-tuned YOLO11n on the VisDrone dataset, evaluated it with attention to small objects, exported it to ONNX, and am building a C++ inference pipeline (OpenCV + ONNX Runtime) aimed at running on a Raspberry Pi 4.
+An end-to-end object detection pipeline for drone imagery. I fine-tuned YOLO11n on the VisDrone dataset, evaluated it with attention to small objects, exported it to ONNX, and reimplemented the full inference pipeline in C++ (OpenCV + ONNX Runtime). The C++ output matches the Python reference exactly. The target is a Raspberry Pi 4.
 
 The goal is to understand the full path from training a model to running it efficiently on edge hardware. Every stage is checked numerically against the stage before it.
+
+![C++ detections on a VisDrone validation image](docs/output_640.jpg)
+*C++ pipeline, 640 model: 26 detections, identical to the Python/Ultralytics reference.*
 
 ---
 
@@ -14,8 +17,8 @@ The goal is to understand the full path from training a model to running it effi
 | 2 | Fine-tune on VisDrone (500-image subset, then full train set) | ✅ Done |
 | 3 | Evaluation: precision / recall / mAP, recall by object size, failure cases | ✅ Done |
 | 4 | Export to ONNX, inference in Python with ONNX Runtime, verify against Ultralytics | ✅ Done |
-| 5 | C++ inference pipeline (OpenCV + ONNX Runtime + CMake) | 🔧 In progress |
-| 6 | Video input and benchmarks on Raspberry Pi 4 (640 / 416 / 320) | ⏳ Planned |
+| 5 | C++ inference pipeline (OpenCV + ONNX Runtime + CMake), verified and benchmarked against Python | ✅ Done |
+| 6 | Video input and benchmarks on Raspberry Pi 4 (640 / 416 / 320) | ⏳ Next |
 
 ---
 
@@ -28,9 +31,10 @@ VisDrone images
 Letterbox resize (keep aspect ratio, pad with gray 114) → RGB → /255 → CHW float tensor
    │
    ▼
-YOLO11n (ONNX)  →  output [1, 14, 8400]
+YOLO11n (ONNX)  →  output [1, 14, N]
                      4 box values (cx, cy, w, h) + 10 class scores
-                     8400 candidates = 80² + 40² + 20²  (strides 8 / 16 / 32)
+                     N candidates = 80² + 40² + 20² = 8400 at 640
+                                    (3549 at 416, 2100 at 320; strides 8 / 16 / 32)
    │
    ▼
 Score filter (≥ 0.25) → class-aware NMS (IoU 0.7) → undo letterbox → clip to image
@@ -39,7 +43,7 @@ Score filter (≥ 0.25) → class-aware NMS (IoU 0.7) → undo letterbox → cli
 Detections (box, class, confidence)
 ```
 
-The ONNX models are exported with static input sizes (640, 416, 320) and **without** built-in NMS, so postprocessing is implemented by hand in both Python and C++.
+The ONNX models are exported with static input sizes (640, 416, 320) and **without** built-in NMS, so postprocessing is implemented by hand in both Python and C++. The C++ detector reads the input size and number of candidates from the model, so one binary runs all three models.
 
 ---
 
@@ -53,7 +57,7 @@ The ONNX models are exported with static input sizes (640, 416, 320) and **witho
 
 ---
 
-## Results
+## Results: accuracy
 
 ### Fine-tuning (validation set)
 
@@ -90,9 +94,13 @@ I studied the images with the lowest recall:
 | `0000001_04527_d_0000008` | 12.2% | Small, distant objects |
 | `0000242_06010_d_0000017` | 12.2% | Small, distant objects |
 
-### ONNX vs Ultralytics (correctness check)
+---
 
-My own Python preprocessing and postprocessing (NumPy + ONNX Runtime) compared with Ultralytics on the same image:
+## Results: correctness across implementations
+
+Each implementation is checked against the previous one on the same image (`0000242_02400_d_0000009.jpg`, 960×540).
+
+**Python ONNX (my own NumPy pre/postprocessing) vs Ultralytics**
 
 | Check | Result |
 |---|---|
@@ -101,23 +109,55 @@ My own Python preprocessing and postprocessing (NumPy + ONNX Runtime) compared w
 | Largest confidence difference | 0.0 |
 | Sanity check: boxes shifted by 5 px | 17 / 26 matched, lowest IoU 0.51 (the check does catch errors) |
 
-### Python ONNX Runtime speed (laptop CPU, Windows, median)
+**C++ vs Python, stage by stage**
 
-| Input size | Preprocess | Inference | Postprocess | Total | ≈ FPS | Detections |
+| Stage | Check | Result |
+|---|---|---|
+| Letterbox | scale, padding, pixel values (incl. RGB order) | identical; tensor checksum within 0.02 of 552,103 (≈ 4×10⁻⁸ relative) |
+| Raw model output | shape, top class score, candidates ≥ 0.25, largest box value | [1, 14, 8400], 0.8668, 123, 645.76: identical |
+| Postprocessing + NMS | number of detections, top-5 class / score / box | 26 detections, top 5 identical to 2 decimals |
+| All input sizes | detections at 640 / 416 / 320 | 26 / 24 / 19: identical to Python |
+
+---
+
+## Results: speed
+
+### C++ vs Python (same machine, same engine)
+
+WSL2 Ubuntu 24.04, ONNX Runtime **1.31.0** in both languages, CPU only, default threading. Median of 50 timed runs after 3 warm-up runs; image loading and drawing are not timed. Times in ms.
+Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz - 4
+
+| Model | Lang | Pre | Inference | Post | Total | FPS |
 |---|---|---|---|---|---|---|
-| 640 | 13.3 ms | 70.4 ms | 4.8 ms | 88.8 ms | 11 | 26 |
-| 416 | 6.3 ms | 34.2 ms | 4.6 ms | 45.6 ms | 22 | 24 |
-| 320 | 3.5 ms | 16.2 ms | 1.7 ms | 21.2 ms | 46 | 19 |
+| 640 | Python | 4.43 | 60.19 | 3.26 | 68.66 | 14.6 |
+| 640 | C++ | **1.54** | 65.28 | **0.09** | **67.39** | **14.8** |
+| 416 | Python | 1.37 | 23.25 | 2.36 | 27.56 | 36.3 |
+| 416 | C++ | **0.68** | 23.75 | **0.05** | **24.48** | **40.9** |
+| 320 | Python | 0.91 | 13.61 | 1.18 | 15.98 | 62.6 |
+| 320 | C++ | **0.44** | 13.52 | **0.03** | **14.00** | **71.4** |
 
-Inference is about 80% of the total time. A C++ rewrite can only speed up pre- and postprocessing. Smaller input sizes are much faster but find fewer objects, mostly small ones.
+C++ 640 is the median of 5 benchmark runs. Inference at 640 varied between 59 and 71 ms from run to run on this laptop, so the 640 inference difference between languages is within measurement noise.
 
-### C++ pipeline (step 5, in progress)
+**Findings**
+1. **Inference is the same in both languages.** Both call the same ONNX Runtime engine, and inference is 85–97% of the total time.
+2. **C++ makes preprocessing 2–3× faster and postprocessing 25–35× faster**, giving about **11–12% higher total throughput** at 416 and 320.
+3. **Input size matters far more than language:** going from 640 to 320 is **~4.8× faster** (14.8 → 71.4 FPS), while C++ vs Python is ~1.1×. On edge hardware, the choice of model and input size decides the speed, and C++ adds the last 10–15% plus control over memory and latency.
 
-- ✅ Load the image and the ONNX model, read input/output names and shapes
-- ✅ Letterbox preprocessing matches Python: same scale, padding and pixel values, tensor checksum within 0.02 of 552,103 (≈ 4×10⁻⁸ relative)
-- ⏳ Run inference and read the raw output
-- ⏳ Postprocessing and NMS (target: the same 26 detections as Python)
-- ⏳ Detector class, drawing, CLI, C++ vs Python benchmark
+### Optimization: preprocessing at 640
+
+The first C++ version took **10.3 ms** to preprocess at 640, while 416 took 1.6 ms. That's 6.5× slower for 2.4× more pixels. The cause:
+- **four temporary buffers allocated on every call** (about 12 MB at 640), and
+- an HWC→CHW loop that **read the whole float image three times**, once per channel. At 640 the ~10 MB working set no longer fits in the CPU cache.
+
+The fix: reuse class-member buffers that are allocated once, and do BGR→RGB, /255 and HWC→CHW in **one pass** directly from the uint8 image with row pointers.
+
+| Model | Preprocess before | After | Speedup |
+|---|---|---|---|
+| 640 | 10.27 ms | 1.45 ms | **7.1×** |
+| 416 | 1.57 ms | 0.75 ms | 2.1× |
+| 320 | 0.98 ms | 0.61 ms | 1.6× |
+
+The detections stayed identical before and after the change.
 
 ---
 
@@ -127,13 +167,17 @@ Inference is about 80% of the total time. A C++ rewrite can only speed up pre- a
 .
 ├── cpp/
 │   ├── CMakeLists.txt
-│   └── src/main.cpp            # C++ inference pipeline (OpenCV + ONNX Runtime)
+│   └── src/
+│       ├── detector.hpp        # Detection / Timings structs, Detector class
+│       ├── detector.cpp        # letterbox, ONNX Runtime inference, decode, NMS
+│       └── main.cpp            # CLI: single image (draw + save) or --bench mode
 ├── python/
 │   ├── onnx_infer.py           # preprocess / infer / postprocess / NMS in NumPy
 │   ├── verify_against_ultralytics.py
 │   └── benchmark.py            # timing at 640 / 416 / 320
 ├── models/                     # visdrone_yolo11n_{640,416,320}.onnx
 ├── image/                      # test images
+├── docs/                       # images used in this README
 └── third_party/                # ONNX Runtime (not committed)
 ```
 
@@ -145,7 +189,7 @@ Inference is about 80% of the total time. A C++ rewrite can only speed up pre- a
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install onnxruntime opencv-python numpy ultralytics
+pip install onnxruntime==1.31.0 opencv-python numpy ultralytics
 
 python python/onnx_infer.py
 python python/verify_against_ultralytics.py
@@ -159,9 +203,16 @@ Requirements: gcc 13, CMake, pkg-config, `libopencv-dev`, and [ONNX Runtime 1.31
 ```bash
 sudo apt install build-essential cmake pkg-config libopencv-dev
 
-cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
-cmake --build cpp/build
-./cpp/build/<executable-name>
+cmake -S cpp -B cpp/build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cpp/build-release
+
+# Detect, draw and save
+./cpp/build-release/visdrone_app models/visdrone_yolo11n_640.onnx \
+    image/0000242_02400_d_0000009.jpg output_640.jpg [conf]
+
+# Benchmark: 3 warm-up runs + N timed runs, prints medians per stage
+./cpp/build-release/visdrone_app models/visdrone_yolo11n_640.onnx \
+    image/0000242_02400_d_0000009.jpg output_640.jpg --bench 50
 ```
 
 The ONNX Runtime library path is embedded in the binary through RPATH, so `LD_LIBRARY_PATH` isn't needed.
@@ -170,14 +221,14 @@ The ONNX Runtime library path is embedded in the binary through RPATH, so `LD_LI
 
 ## Tools
 
-Python · Ultralytics YOLO11 (8.4) · PyTorch · Google Colab (T4) · ONNX · ONNX Runtime · NumPy · OpenCV · C++17 · CMake · WSL2 · Raspberry Pi 4 (planned target)
+Python · Ultralytics YOLO11 (8.4) · PyTorch · Google Colab (T4) · ONNX · ONNX Runtime 1.31 · NumPy · OpenCV · C++17 · CMake · WSL2 · Raspberry Pi 4 (target)
 
 ## Next steps
 
-- Finish the C++ pipeline and compare its speed with Python
-- Video input
-- Benchmark 640 / 416 / 320 on a Raspberry Pi 4 (64-bit OS)
-- Investigate improving small-object recall: higher input resolution, tiling/slicing, or a P2 detection head
+- **Video input:** `cv::VideoCapture` → `Detector` → annotated video, with per-frame timing
+- **Raspberry Pi 4 (64-bit OS):** C++ and Python benchmarks at 640 / 416 / 320, to find the input size that runs in real time
+- **Faster inference:** INT8 quantization, explicit thread settings
+- **Better small-object recall:** higher input resolution, tiling/slicing (SAHI), or a P2 detection head
 
 ## Author
 
