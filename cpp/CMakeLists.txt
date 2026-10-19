@@ -29,7 +29,8 @@ set(
 
 add_executable(
     visdrone_app
-    main.cpp
+    src/main.cpp
+    src/detector.cpp
 )
 
 # --------------------------------------------------
@@ -39,7 +40,7 @@ add_executable(
 target_include_directories(
     visdrone_app
     PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${ONNXRUNTIME_DIR}/include"
 )
 
